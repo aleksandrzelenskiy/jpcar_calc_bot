@@ -42,6 +42,28 @@ const deliveryConfigSchema = new mongoose.Schema<DeliveryConfigDoc>(
 export const DeliveryConfig: Model<DeliveryConfigDoc> =
   mongoose.models.DeliveryConfig || mongoose.model<DeliveryConfigDoc>("DeliveryConfig", deliveryConfigSchema);
 
+export interface UserDoc extends Document {
+  userId: string;
+  firstName: string;
+  lastName?: string;
+  username?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const userSchema = new mongoose.Schema<UserDoc>(
+  {
+    userId: { type: String, required: true, unique: true, index: true },
+    firstName: { type: String, required: true },
+    lastName: { type: String },
+    username: { type: String },
+  },
+  { timestamps: true, collection: "users" }
+);
+
+export const User: Model<UserDoc> =
+  mongoose.models.User || mongoose.model<UserDoc>("User", userSchema);
+
 export interface HistoryDoc extends Document {
   userId: string;
   createdAt: Date;

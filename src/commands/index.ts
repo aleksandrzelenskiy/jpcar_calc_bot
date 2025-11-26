@@ -4,6 +4,7 @@ import { getRates } from "../services/currencyService";
 import { formatCurrencyRange, formatCurrencyRounded, formatRub, round } from "../utils/format";
 import { saveHistory } from "../services/historyService";
 import { getDeliveryConfig } from "../services/deliveryConfigService";
+import { upsertUser } from "../services/userService";
 
 type Step = "price" | "age" | "engineType" | "volume" | "power" | "done";
 
@@ -31,6 +32,7 @@ export function registerBot(bot: Bot<MyContext>) {
   );
 
   bot.command("start", async (ctx) => {
+    await upsertUser(ctx.from);
     ctx.session.step = "price";
     ctx.session.input = {};
     await ctx.reply(
@@ -43,6 +45,7 @@ export function registerBot(bot: Bot<MyContext>) {
 
   bot.on("message:text", async (ctx) => {
     try {
+      await upsertUser(ctx.from);
       switch (ctx.session.step) {
         case "price":
           return await handlePrice(ctx);
@@ -65,6 +68,7 @@ export function registerBot(bot: Bot<MyContext>) {
 
   bot.on("callback_query:data", async (ctx) => {
     try {
+      await upsertUser(ctx.from);
       const data = ctx.callbackQuery.data;
       if (data.startsWith("age:")) {
         await handleAgeSelection(ctx, data);
