@@ -6,7 +6,7 @@ export interface CurrencyRates {
   [code: string]: number; // to RUB
 }
 
-const CBR_URL = "https://www.cbr-xml-daily.ru/daily_json.js";
+const ATB_URL = "https://www.atb.su/services/exchange/";
 
 export async function getRates(): Promise<CurrencyRates> {
   const today = new Date().toISOString().slice(0, 10);
@@ -16,18 +16,12 @@ export async function getRates(): Promise<CurrencyRates> {
     if (hasAll(rates)) return rates;
   }
 
-  const response = await fetch(CBR_URL);
+  const response = await fetch(ATB_URL);
   if (!response.ok) {
     throw new Error(`Failed to fetch rates: ${response.statusText}`);
   }
-  const data = (await response.json()) as any;
-  const valute = data?.Valute;
-  const rates: CurrencyRates = {
-    RUB: 1,
-    USD: normalizeRate(valute?.USD),
-    EUR: normalizeRate(valute?.EUR),
-    JPY: normalizeRate(valute?.JPY),
-  };
+  const html = await response.text();
+  const rates = parseAtbRates(html);
 
   await RateCache.findOneAndUpdate(
     { date: today },
@@ -36,13 +30,6 @@ export async function getRates(): Promise<CurrencyRates> {
   );
 
   return rates;
-}
-
-function normalizeRate(entry: any): number {
-  if (!entry?.Value || !entry?.Nominal) {
-    throw new Error("Currency rate missing required fields");
-  }
-  return entry.Value / entry.Nominal;
 }
 
 export function convertToRub(amount: number, currency: SupportedCurrency, rates: CurrencyRates): number {
@@ -63,4 +50,28 @@ function mapToObject(map: any): CurrencyRates {
 
 function hasAll(rates: CurrencyRates): boolean {
   return !!(rates.JPY && rates.USD && rates.EUR && rates.RUB);
+}
+
+function parseAtbRates(html: string): CurrencyRates {
+  const extract = (name: string) => {
+    const regex = new RegExp(`name="${name}"\\s+value="([\\d.,]+)"`, "i");
+    const match = html.match(regex);
+    if (!match) return null;
+    return Number(match[1].replace(",", "."));
+  };
+
+  const usd = extract("usd2") ?? extract("usd1");
+  const eur = extract("eur2") ?? extract("eur1");
+  const jpy = extract("jpy2") ?? extract("jpy1");
+
+  if (!usd || !eur || !jpy) {
+    throw new Error("ATB rates not found or malformed");
+  }
+
+  return {
+    RUB: 1,
+    USD: usd,
+    EUR: eur,
+    JPY: jpy,
+  };
 }
