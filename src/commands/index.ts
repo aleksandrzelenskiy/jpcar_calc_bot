@@ -90,7 +90,7 @@ export function registerBot(bot: Bot<MyContext>) {
         await handleEngineSelection(ctx, data);
       } else if (data === "order:car") {
         await ctx.answerCallbackQuery();
-        await ctx.reply("Здесь могла быть ваша реклама!");
+        await ctx.reply("Здесь могла быть Ваша реклама! 😉🇯🇵🚘");
       } else {
         await ctx.answerCallbackQuery();
       }
@@ -195,7 +195,7 @@ async function handlePower(ctx: MyContext) {
     )} ₽\n` +
     `   Комиссия компании: ${formatCurrencyRange(delivery.companyFeeMinRub, delivery.companyFeeMaxRub)} ₽`;
 
-  const kb = new InlineKeyboard().text("Заказать авто", "order:car");
+  const kb = new InlineKeyboard().text("Заказать авто 🚗", "order:car");
 
   return ctx.reply(response, { reply_markup: kb });
 }
