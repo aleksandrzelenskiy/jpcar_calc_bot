@@ -21,7 +21,16 @@ export async function getRates(): Promise<CurrencyRates> {
     throw new Error(`Failed to fetch rates: ${response.statusText}`);
   }
   const html = await response.text();
-  const rates = parseAtbRates(html);
+  let rates: CurrencyRates;
+  try {
+    rates = parseAtbRates(html);
+  } catch (err) {
+    if (cached) {
+      console.error("Falling back to cached rates due to parse error", err);
+      return mapToObject(cached.rates);
+    }
+    throw err;
+  }
 
   await RateCache.findOneAndUpdate(
     { date: today },
@@ -53,7 +62,7 @@ function hasAll(rates: CurrencyRates): boolean {
 }
 
 function parseAtbRates(html: string): CurrencyRates {
-  const transferBlock = extractBlock(html, "currencyTab4");
+  const transferBlock = sliceTab(html, "currencyTab4");
   const usdSale = parseSaleFromBlock(transferBlock, "USD");
   const eurSale = parseSaleFromBlock(transferBlock, "EUR");
   const jpySalePer100 = parseSaleFromBlock(transferBlock, "JPY");
@@ -70,12 +79,12 @@ function parseAtbRates(html: string): CurrencyRates {
   };
 }
 
-function extractBlock(html: string, id: string): string {
+function sliceTab(html: string, id: string): string {
   const start = html.indexOf(`id="${id}"`);
-  if (start === -1) return "";
-  const sliced = html.slice(start);
-  const end = sliced.indexOf("</div>");
-  return end === -1 ? sliced : sliced.slice(0, end);
+  if (start === -1) return html;
+  const next = html.indexOf('currency-tabs__item', start + 1);
+  if (next === -1) return html.slice(start);
+  return html.slice(start, next);
 }
 
 function parseSaleFromBlock(block: string, currency: "USD" | "EUR" | "JPY"): number | null {
