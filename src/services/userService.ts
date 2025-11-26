@@ -1,5 +1,5 @@
 import { User } from "./models";
-import { User as TelegramUser } from "grammy/out/platform.node";
+import { User as TelegramUser } from "grammy/types";
 
 export async function upsertUser(user?: TelegramUser) {
   if (!user) return;

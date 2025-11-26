@@ -53,25 +53,39 @@ function hasAll(rates: CurrencyRates): boolean {
 }
 
 function parseAtbRates(html: string): CurrencyRates {
-  const extract = (name: string) => {
-    const regex = new RegExp(`name="${name}"\\s+value="([\\d.,]+)"`, "i");
-    const match = html.match(regex);
-    if (!match) return null;
-    return Number(match[1].replace(",", "."));
-  };
+  const transferBlock = extractBlock(html, "currencyTab4");
+  const usdSale = parseSaleFromBlock(transferBlock, "USD");
+  const eurSale = parseSaleFromBlock(transferBlock, "EUR");
+  const jpySalePer100 = parseSaleFromBlock(transferBlock, "JPY");
 
-  const usd = extract("usd2") ?? extract("usd1");
-  const eur = extract("eur2") ?? extract("eur1");
-  const jpy = extract("jpy2") ?? extract("jpy1");
-
-  if (!usd || !eur || !jpy) {
-    throw new Error("ATB rates not found or malformed");
+  if (!usdSale || !eurSale || !jpySalePer100) {
+    throw new Error("ATB transfer rates not found or malformed");
   }
 
   return {
     RUB: 1,
-    USD: usd,
-    EUR: eur,
-    JPY: jpy,
+    USD: usdSale,
+    EUR: eurSale,
+    JPY: jpySalePer100 / 100, // convert per 1 ¥
   };
+}
+
+function extractBlock(html: string, id: string): string {
+  const start = html.indexOf(`id="${id}"`);
+  if (start === -1) return "";
+  const sliced = html.slice(start);
+  const end = sliced.indexOf("</div>");
+  return end === -1 ? sliced : sliced.slice(0, end);
+}
+
+function parseSaleFromBlock(block: string, currency: "USD" | "EUR" | "JPY"): number | null {
+  const regex = new RegExp(
+    `<div class="currency-table__val">${currency}</div>[\\s\\S]*?<div class="currency-table__head">покупка</div>\\s*([\\d.,]+)[\\s\\S]*?<div class="currency-table__head">продажа</div>\\s*([\\d.,]+)`,
+    "i"
+  );
+  const match = block.match(regex);
+  if (!match) return null;
+  const sale = match[2]?.replace(/\s+/g, "").replace(",", ".");
+  const num = Number(sale);
+  return Number.isFinite(num) ? num : null;
 }
