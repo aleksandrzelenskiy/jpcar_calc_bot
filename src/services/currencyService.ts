@@ -3,13 +3,17 @@ import { RateCache } from "./models";
 export type SupportedCurrency = "JPY" | "USD" | "EUR" | "RUB";
 
 export interface CurrencyRates {
-  [code: string]: number; // to RUB
+  [code: string]: number; // RUB за 1 (USD/EUR/RUB) или за 100 (JPY)
 }
 
 const ATB_URL = "https://www.atb.su/services/exchange/";
 
+/**
+ * Основной вход: получаем курсы с кешированием по дате.
+ */
 export async function getRates(): Promise<CurrencyRates> {
   const today = new Date().toISOString().slice(0, 10);
+
   const cached = await RateCache.findOne({ date: today });
   if (cached) {
     const rates = mapToObject(cached.rates);
@@ -20,7 +24,9 @@ export async function getRates(): Promise<CurrencyRates> {
   if (!response.ok) {
     throw new Error(`Failed to fetch rates: ${response.statusText}`);
   }
+
   const html = await response.text();
+
   let rates: CurrencyRates;
   try {
     rates = parseAtbRates(html);
@@ -41,6 +47,11 @@ export async function getRates(): Promise<CurrencyRates> {
   return rates;
 }
 
+/**
+ * Конвертация в рубли.
+ *
+ * ВАЖНО: JPY в rates хранится "за 100¥".
+ */
 export function convertToRub(
     amount: number,
     currency: SupportedCurrency,
@@ -48,18 +59,33 @@ export function convertToRub(
 ): number {
   const rate = rates[currency];
   if (!rate) throw new Error(`Unsupported currency ${currency}`);
+
+  if (currency === "JPY") {
+    // rate = RUB за 100¥
+    return (amount / 100) * rate;
+  }
+
+  // USD/EUR/RUB — курс за 1 единицу
   return amount * rate;
 }
 
+/**
+ * Mongoose Map -> plain object.
+ */
 function mapToObject(map: any): CurrencyRates {
   if (!map) return {} as CurrencyRates;
-  // Mongoose Map -> plain object
   const entries: [string, number][] = [];
-  for (const [key, value] of (map as any).entries
-      ? map.entries()
-      : Object.entries(map)) {
-    entries.push([key, Number(value)]);
+
+  if (map && typeof map.entries === "function") {
+    for (const [key, value] of map.entries()) {
+      entries.push([key, Number(value)]);
+    }
+  } else {
+    for (const [key, value] of Object.entries(map ?? {})) {
+      entries.push([key, Number(value)]);
+    }
   }
+
   return Object.fromEntries(entries) as CurrencyRates;
 }
 
@@ -68,11 +94,12 @@ function hasAll(rates: CurrencyRates): boolean {
 }
 
 /**
- * Парсим именно вкладку "для денежных переводов".
+ * Парсим вкладку "для денежных переводов" — это currencyTab4 с таблицей.
+ * JPY сохраняем КАК НА САЙТЕ: RUB за 100¥ (без деления на 100).
  */
 function parseAtbRates(html: string): CurrencyRates {
-  // 1) Пытаемся вырезать блок по тексту "для денежных переводов"
-  const transferBlock = sliceTransfersBlock(html);
+  const transferBlock = sliceTab(html, "currencyTab4");
+
   const usdSale = parseSaleFromBlock(transferBlock, "USD");
   const eurSale = parseSaleFromBlock(transferBlock, "EUR");
   const jpySalePer100 = parseSaleFromBlock(transferBlock, "JPY");
@@ -80,29 +107,13 @@ function parseAtbRates(html: string): CurrencyRates {
   if (usdSale && eurSale && jpySalePer100) {
     return {
       RUB: 1,
-      USD: usdSale,
-      EUR: eurSale,
-      JPY: jpySalePer100 / 100, // convert per 1 ¥
+      USD: usdSale,        // "за 1$"
+      EUR: eurSale,        // "за 1€"
+      JPY: jpySalePer100,  // "за 100¥" ← как в вёрстке
     };
   }
 
-  // 2) Если по тексту не получилось (или верстку сильно поменяли) —
-  // пробуем старый способ по id таба (currencyTab4).
-  const legacyBlock = sliceTab(html, "currencyTab4");
-  const usdLegacy = parseSaleFromBlock(legacyBlock, "USD");
-  const eurLegacy = parseSaleFromBlock(legacyBlock, "EUR");
-  const jpyLegacyPer100 = parseSaleFromBlock(legacyBlock, "JPY");
-
-  if (usdLegacy && eurLegacy && jpyLegacyPer100) {
-    return {
-      RUB: 1,
-      USD: usdLegacy,
-      EUR: eurLegacy,
-      JPY: jpyLegacyPer100 / 100,
-    };
-  }
-
-  // 3) Фолбэк — скрытые инпуты, если вообще всё поменяли.
+  // Фолбэк: скрытые инпуты
   const hidden = parseHiddenInputs(html);
   if (hidden) return hidden;
 
@@ -110,64 +121,70 @@ function parseAtbRates(html: string): CurrencyRates {
 }
 
 /**
- * Вырезаем HTML-блок, относящийся к вкладке
- * с текстом "для денежных переводов".
+ * Вырезает HTML блока нужного таба.
+ * На странице два currencyTab4, поэтому:
+ * - проходим по всем вхождениям id="currencyTab4"
+ * - выбираем то, внутри которого есть "currency-table".
  */
-function sliceTransfersBlock(html: string): string {
-  const lower = html.toLowerCase();
-  const labelIndex = lower.indexOf("для денежных переводов");
-  if (labelIndex === -1) {
-    // если не нашли текст — вернем исходный html, дальше парсер попытается legacy/hidden
-    return html;
+function sliceTab(html: string, id: string): string {
+  const marker = `id="${id}"`;
+  let pos = html.indexOf(marker);
+  if (pos === -1) return html;
+
+  let chosenStart = -1;
+
+  while (pos !== -1) {
+    const next = html.indexOf(marker, pos + marker.length);
+    const end = next === -1 ? html.length : next;
+    const chunk = html.slice(pos, end);
+
+    if (chunk.includes("currency-table")) {
+      // Это таб с таблицей, запоминаем его как кандидата
+      chosenStart = pos;
+    }
+
+    pos = next;
   }
 
-  // Ищем поблизости таблицу с курсами
-  const tableIndex = lower.indexOf("currency-table", labelIndex);
-  if (tableIndex === -1) {
-    // нет явного класса таблицы — режем от текста и дальше
-    return html.slice(labelIndex);
-  }
+  // Если нашли таб с таблицей — берём его, иначе первый попавшийся
+  const start =
+      chosenStart !== -1 ? chosenStart : html.indexOf(marker);
 
-  // Ограничим блок до следующего элемента табов/секции,
-  // чтобы не хватать лишнее.
-  const nextTabIndex =
-      lower.indexOf("currency-tabs__item", tableIndex + 1) !== -1
-          ? lower.indexOf("currency-tabs__item", tableIndex + 1)
-          : lower.indexOf("currency-tab", tableIndex + 1); // запасной вариант
+  if (start === -1) return html;
 
-  const end =
-      nextTabIndex !== -1 && nextTabIndex > tableIndex ? nextTabIndex : html.length;
+  const nextItem = html.indexOf('currency-tabs__item', start + 1);
+  if (nextItem === -1) return html.slice(start);
 
-  return html.slice(tableIndex, end);
+  return html.slice(start, nextItem);
 }
 
 /**
- * Старый метод — вырезает блок по id таба.
- * Оставляем как резервный вариант.
+ * Ищем внутри блока строку с нужной валютой
+ * и парсим "продажу".
  */
-function sliceTab(html: string, id: string): string {
-  const start = html.indexOf(`id="${id}"`);
-  if (start === -1) return html;
-  const next = html.indexOf("currency-tabs__item", start + 1);
-  if (next === -1) return html.slice(start);
-  return html.slice(start, next);
-}
-
 function parseSaleFromBlock(
     block: string,
     currency: "USD" | "EUR" | "JPY"
 ): number | null {
   const regex = new RegExp(
-      `<div class="currency-table__val">${currency}</div>[\\s\\S]*?<div class="currency-table__head">покупка</div>\\s*([\\d.,]+)[\\s\\S]*?<div class="currency-table__head">продажа</div>\\s*([\\d.,]+)`,
+      `<div\\s+class="currency-table__val">\\s*${currency}\\s*<\\/div>[\\s\\S]*?<div\\s+class="currency-table__head">\\s*покупка\\s*<\\/div>\\s*([\\d.,]+)[\\s\\S]*?<div\\s+class="currency-table__head">\\s*продажа\\s*<\\/div>\\s*([\\d.,]+)`,
       "i"
   );
+
   const match = block.match(regex);
   if (!match) return null;
-  const sale = match[2]?.replace(/\s+/g, "").replace(",", ".");
-  const num = Number(sale);
+
+  // match[1] — покупка, match[2] — продажа
+  const saleRaw = match[2].replace(/\s+/g, "").replace(",", ".");
+  const num = Number(saleRaw);
+
   return Number.isFinite(num) ? num : null;
 }
 
+/**
+ * Фолбэк через скрытые инпуты.
+ * Здесь JPY тоже приводим к формату "RUB за 100¥".
+ */
 function parseHiddenInputs(html: string): CurrencyRates | null {
   const extract = (name: string) => {
     const regex = new RegExp(`name="${name}"\\s+value="([\\d.,]+)"`, "i");
@@ -182,12 +199,14 @@ function parseHiddenInputs(html: string): CurrencyRates | null {
 
   if (!usd || !eur || !jpyRaw) return null;
 
-  const jpy = jpyRaw > 5 ? jpyRaw / 100 : jpyRaw;
+  // Если банк отдаёт курс за 1¥ (например 0.53) — умножаем на 100.
+  // Если уже за 100¥ (например 53.51) — оставляем как есть.
+  const jpyPer100 = jpyRaw < 5 ? jpyRaw * 100 : jpyRaw;
 
   return {
     RUB: 1,
-    USD: usd,
-    EUR: eur,
-    JPY: jpy,
+    USD: usd,       // за 1$
+    EUR: eur,       // за 1€
+    JPY: jpyPer100, // за 100¥
   };
 }
