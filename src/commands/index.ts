@@ -95,7 +95,7 @@ async function handlePrice(ctx: MyContext) {
   ctx.session.step = "age";
   const kb = new InlineKeyboard()
     .text("До 3 лет", "age:under3")
-    .text("3–5 лет", "age:3to5")
+    .text("❗️3–5 лет", "age:3to5")
     .row()
     .text("Более 5 лет", "age:over5");
   return ctx.reply("Возраст авто?", { reply_markup: kb });
