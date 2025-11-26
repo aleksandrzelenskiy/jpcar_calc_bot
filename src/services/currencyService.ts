@@ -77,10 +77,6 @@ function parseAtbRates(html: string): CurrencyRates {
     };
   }
 
-  // Fallback: hidden inputs (jpy1/2, usd1/2, eur1/2)
-  const hidden = parseHiddenInputs(html);
-  if (hidden) return hidden;
-
   throw new Error("ATB transfer rates not found or malformed");
 }
 
@@ -102,29 +98,4 @@ function parseSaleFromBlock(block: string, currency: "USD" | "EUR" | "JPY"): num
   const sale = match[2]?.replace(/\s+/g, "").replace(",", ".");
   const num = Number(sale);
   return Number.isFinite(num) ? num : null;
-}
-
-function parseHiddenInputs(html: string): CurrencyRates | null {
-  const extract = (name: string) => {
-    const regex = new RegExp(`name="${name}"\\s+value="([\\d.,]+)"`, "i");
-    const match = html.match(regex);
-    if (!match) return null;
-    return Number(match[1].replace(",", "."));
-  };
-
-  const usd = extract("usd2") ?? extract("usd1");
-  const eur = extract("eur2") ?? extract("eur1");
-  const jpyRaw = extract("jpy2") ?? extract("jpy1");
-
-  if (!usd || !eur || !jpyRaw) return null;
-
-  // Hidden inputs могут быть либо за 1¥ (~0.x), либо за 100¥ (~50.x)
-  const jpy = jpyRaw > 5 ? jpyRaw / 100 : jpyRaw;
-
-  return {
-    RUB: 1,
-    USD: usd,
-    EUR: eur,
-    JPY: jpy,
-  };
 }
