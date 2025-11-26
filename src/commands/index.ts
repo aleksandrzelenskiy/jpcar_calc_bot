@@ -88,6 +88,9 @@ export function registerBot(bot: Bot<MyContext>) {
         await handleAgeSelection(ctx, data);
       } else if (data.startsWith("engine:")) {
         await handleEngineSelection(ctx, data);
+      } else if (data === "order:car") {
+        await ctx.answerCallbackQuery();
+        await ctx.reply("Здесь могла быть ваша реклама!");
       } else {
         await ctx.answerCallbackQuery();
       }
@@ -192,7 +195,9 @@ async function handlePower(ctx: MyContext) {
     )} ₽\n` +
     `   Комиссия компании: ${formatCurrencyRange(delivery.companyFeeMinRub, delivery.companyFeeMaxRub)} ₽`;
 
-  return ctx.reply(response);
+  const kb = new InlineKeyboard().text("Заказать авто", "order:car");
+
+  return ctx.reply(response, { reply_markup: kb });
 }
 
 function parsePrice(text: string):
